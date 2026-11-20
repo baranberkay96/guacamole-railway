@@ -37,13 +37,15 @@ Market (2026-11): "Apache Guacamole" (third-party repo) ≈47 active / 27 recent
 
 ## Resources
 
-Estimated (to be replaced by measurements):
+Measured on Railway, test project, 2026-11-20 (Guacamole 1.6.0, Postgres 18.6), 40 min incl. logins and one telnet session:
 
-| Service | Idle RAM | CPU idle |
+| Service | RAM | CPU idle |
 |---|---|---|
-| Guacamole | 0.3-0.5 GB (JVM) | low |
-| guacd | < 0.05 GB idle, +50-150 MB per graphical session | low idle |
-| Postgres | ~0.1 GB | ~0 |
+| Guacamole | 0.33-0.46 GB (JVM) | ~0.001 vCPU (peaks 0.04) |
+| guacd | 0.011 GB idle, 0.05 GB after one text session (graphical RDP/VNC sessions use more, not measured) | ~0 |
+| Postgres | 0.07-0.10 GB | ~0 |
+
+Estimate: ~0.6 GB RAM ≈ $6/month + CPU and volume ≈ **$6-8/month**. Trial and Hobby; Free (0.5 GB per service) is tight for the JVM.
 
 Railway prices: RAM $10/GB-month, vCPU $20/vCPU-month, volume $0.15/GB-month.
 
