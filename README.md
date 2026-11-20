@@ -1,5 +1,7 @@
 # Deploy and Host Apache Guacamole with Railway
 
+[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/apache-guacamole-16-remote-desktop-gatew?referralCode=20H68q)
+
 Apache Guacamole is a clientless remote desktop gateway: it gives you RDP, VNC, SSH and Telnet sessions in a web browser, with no plugin or client software. This community template runs Guacamole 1.6.0 with its guacd proxy daemon and PostgreSQL 18, creates the database schema for you, and replaces the well-known guacadmin/guacadmin login before Guacamole goes online.
 
 ## About Hosting Apache Guacamole
