@@ -1,0 +1,255 @@
+{
+  "name": "Apache Guacamole 1.6 Remote Desktop Gateway",
+  "description": "Browser access to RDP, VNC and SSH hosts, with Postgres and TOTP 2FA",
+  "category": "Other",
+  "tags": [
+    "guacamole",
+    "remote-desktop",
+    "rdp",
+    "vnc",
+    "ssh",
+    "gateway",
+    "bastion",
+    "2fa"
+  ],
+  "image": "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/guacamole.svg",
+  "upstream": {
+    "guacamole": "guacamole/guacamole:1.6.0@sha256:f344085e618bb05e22b964b0208dbd06d3468275bac70206f93805245e067b40 (Apache Guacamole 1.6.0)",
+    "guacd": "guacamole/guacd:1.6.0@sha256:8974eaa9ba32f713daf311e7cc8cd7e4cdfba1edea39eed75524e78ef4b08f4f",
+    "postgres": "ghcr.io/railwayapp-templates/postgres-ssl:18.6@sha256:4fc833b43d2aaf6ecc9b18615f5533602b723a32d0e2efe2dae8ca0f7217c863 (= :18, checked 2026-11-20)",
+    "license": "Apache Guacamole: Apache-2.0",
+    "checked": "2026-11-20"
+  },
+  "services": {
+    "Guacamole": {
+      "icon": "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/guacamole.svg",
+      "source": {
+        "repo": "baranberkay96/guacamole-railway",
+        "rootDirectory": "/services/guacamole"
+      },
+      "startCommand": null,
+      "preDeployCommand": null,
+      "healthcheckPath": "/",
+      "healthcheckTimeout": 1200,
+      "restartPolicyType": "ALWAYS",
+      "numReplicas": 1,
+      "cronSchedule": null,
+      "publicDomain": true,
+      "targetPort": 8080,
+      "tcpProxy": null,
+      "volume": null,
+      "variables": {
+        "PORT": {
+          "defaultValue": "8080",
+          "description": "Port Tomcat listens on (Railway's healthcheck and domain use it).",
+          "required": true
+        },
+        "WEBAPP_CONTEXT": {
+          "defaultValue": "ROOT",
+          "description": "Serve Guacamole at / instead of /guacamole.",
+          "required": true
+        },
+        "GUACAMOLE_ADMIN_USERNAME": {
+          "defaultValue": "admin",
+          "description": "Administrator created on the first boot (the seeded guacadmin account is renamed). An invalid name keeps guacadmin.",
+          "required": true
+        },
+        "GUACAMOLE_ADMIN_PASSWORD": {
+          "defaultValue": "${{secret(24)}}",
+          "description": "Administrator password (at least 8 characters). Replaces the published default guacadmin password before Guacamole starts.",
+          "required": true
+        },
+        "GUACAMOLE_ADMIN_PASSWORD_RESET": {
+          "defaultValue": "false",
+          "description": "true = set the administrator's password to GUACAMOLE_ADMIN_PASSWORD on the next boot (recovery). Set back to false afterwards.",
+          "required": false
+        },
+        "GUACD_HOSTNAME": {
+          "defaultValue": "${{guacd.RAILWAY_PRIVATE_DOMAIN}}",
+          "description": "guacd proxy daemon on the private network.",
+          "required": true
+        },
+        "GUACD_PORT": {
+          "defaultValue": "4822",
+          "description": "guacd port.",
+          "required": true
+        },
+        "POSTGRESQL_HOSTNAME": {
+          "defaultValue": "${{Postgres.RAILWAY_PRIVATE_DOMAIN}}",
+          "description": "Postgres host on the private network.",
+          "required": true
+        },
+        "POSTGRESQL_PORT": {
+          "defaultValue": "${{Postgres.PGPORT}}",
+          "description": "Postgres port.",
+          "required": true
+        },
+        "POSTGRESQL_DATABASE": {
+          "defaultValue": "${{Postgres.POSTGRES_DB}}",
+          "description": "Database with Guacamole's users, connections and history.",
+          "required": true
+        },
+        "POSTGRESQL_USERNAME": {
+          "defaultValue": "${{Postgres.POSTGRES_USER}}",
+          "description": "Database user.",
+          "required": true
+        },
+        "POSTGRESQL_PASSWORD": {
+          "defaultValue": "${{Postgres.POSTGRES_PASSWORD}}",
+          "description": "Database password.",
+          "required": true
+        },
+        "TOTP_ENABLED": {
+          "defaultValue": "false",
+          "description": "true = every user must enroll a TOTP authenticator app (two-factor) at the next login.",
+          "required": false
+        },
+        "BAN_ENABLED": {
+          "defaultValue": "true",
+          "description": "Temporarily ban client addresses after repeated failed logins (Guacamole's ban extension).",
+          "required": false
+        },
+        "BAN_MAX_INVALID_ATTEMPTS": {
+          "defaultValue": "5",
+          "description": "Failed logins before an address is banned.",
+          "required": false
+        },
+        "BAN_ADDRESS_DURATION": {
+          "defaultValue": "300",
+          "description": "Ban length in seconds.",
+          "required": false
+        },
+        "REMOTE_IP_VALVE_ENABLED": {
+          "defaultValue": "true",
+          "description": "Take the client address from Railway's proxy header, so bans and login history use real addresses.",
+          "required": false
+        },
+        "REMOTE_IP_VALVE_REMOTE_IP_HEADER": {
+          "defaultValue": "x-real-ip",
+          "description": "Header that carries the client address.",
+          "required": false
+        },
+        "REMOTE_IP_VALVE_INTERNAL_PROXIES": {
+          "defaultValue": ".*",
+          "description": "Trust that header from Railway's edge proxy (the only way in).",
+          "required": false
+        },
+        "REMOTE_IP_VALVE_PROTOCOL_HEADER": {
+          "defaultValue": "x-forwarded-proto",
+          "description": "Header that tells Tomcat the request came over HTTPS.",
+          "required": false
+        },
+        "RAILWAY_DEPLOYMENT_DRAINING_SECONDS": {
+          "defaultValue": "15",
+          "description": "Seconds Tomcat gets to close sessions on redeploy.",
+          "required": false
+        }
+      }
+    },
+    "guacd": {
+      "icon": "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/guacamole.svg",
+      "source": {
+        "image": "guacamole/guacd:1.6.0@sha256:8974eaa9ba32f713daf311e7cc8cd7e4cdfba1edea39eed75524e78ef4b08f4f"
+      },
+      "startCommand": "/opt/guacamole/sbin/guacd -f -b :: -l 4822 -L info",
+      "preDeployCommand": null,
+      "healthcheckPath": null,
+      "healthcheckTimeout": null,
+      "restartPolicyType": "ALWAYS",
+      "numReplicas": 1,
+      "cronSchedule": null,
+      "publicDomain": false,
+      "targetPort": null,
+      "tcpProxy": null,
+      "volume": null,
+      "variables": {
+        "RAILWAY_DEPLOYMENT_DRAINING_SECONDS": {
+          "defaultValue": "10",
+          "description": "Seconds guacd gets to close open remote sessions on redeploy.",
+          "required": false
+        }
+      }
+    },
+    "Postgres": {
+      "icon": "https://devicons.railway.app/i/postgresql.svg",
+      "source": {
+        "image": "ghcr.io/railwayapp-templates/postgres-ssl:18.6@sha256:4fc833b43d2aaf6ecc9b18615f5533602b723a32d0e2efe2dae8ca0f7217c863"
+      },
+      "startCommand": null,
+      "preDeployCommand": null,
+      "healthcheckPath": null,
+      "healthcheckTimeout": null,
+      "restartPolicyType": "ALWAYS",
+      "numReplicas": 1,
+      "cronSchedule": null,
+      "publicDomain": false,
+      "targetPort": null,
+      "tcpProxy": null,
+      "volume": {
+        "mountPath": "/var/lib/postgresql/data"
+      },
+      "variables": {
+        "PGDATA": {
+          "defaultValue": "/var/lib/postgresql/data/pgdata",
+          "description": "Location where the database is initialized (inside the volume).",
+          "required": true
+        },
+        "PGHOST": {
+          "defaultValue": "${{RAILWAY_PRIVATE_DOMAIN}}",
+          "description": "Private hostname of the database.",
+          "required": true
+        },
+        "PGPORT": {
+          "defaultValue": "5432",
+          "description": "Port to connect to Postgres.",
+          "required": true
+        },
+        "PGUSER": {
+          "defaultValue": "${{POSTGRES_USER}}",
+          "description": "User for the Railway Data panel.",
+          "required": true
+        },
+        "PGDATABASE": {
+          "defaultValue": "${{POSTGRES_DB}}",
+          "description": "Database for the Railway Data panel.",
+          "required": true
+        },
+        "PGPASSWORD": {
+          "defaultValue": "${{POSTGRES_PASSWORD}}",
+          "description": "Password for the Railway Data panel.",
+          "required": true
+        },
+        "POSTGRES_DB": {
+          "defaultValue": "guacamole",
+          "description": "Database created on the first boot (Guacamole's database).",
+          "required": true
+        },
+        "POSTGRES_USER": {
+          "defaultValue": "postgres",
+          "description": "Database superuser.",
+          "required": true
+        },
+        "POSTGRES_PASSWORD": {
+          "defaultValue": "${{ secret(32, \"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ\") }}",
+          "description": "Database password, generated at deploy.",
+          "required": true
+        },
+        "DATABASE_URL": {
+          "defaultValue": "postgresql://${{PGUSER}}:${{POSTGRES_PASSWORD}}@${{RAILWAY_PRIVATE_DOMAIN}}:5432/${{PGDATABASE}}",
+          "description": "Private connection URL.",
+          "required": true
+        },
+        "SSL_CERT_DAYS": {
+          "defaultValue": "820",
+          "description": "Validity of the self-signed TLS certificate in days.",
+          "required": false
+        },
+        "RAILWAY_DEPLOYMENT_DRAINING_SECONDS": {
+          "defaultValue": "60",
+          "description": "Seconds Postgres gets to shut down cleanly on redeploy.",
+          "required": true
+        }
+      }
+    }
+  }
+}

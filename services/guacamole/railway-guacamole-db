@@ -1,0 +1,111 @@
+#!/bin/bash
+# Prepare Guacamole's PostgreSQL database (runs before Tomcat, as user guacamole).
+#
+#  1. Wait for Postgres (up to 15 min).
+#  2. First boot (no guacamole_entity table): load the schema shipped in the image
+#     (/opt/guacamole/extensions/guacamole-auth-jdbc/postgresql/schema/*.sql) in one
+#     transaction, and rename the seeded administrator guacadmin to GUACAMOLE_ADMIN_USERNAME.
+#  3. Every boot: if any user still has the published default password (guacadmin), replace
+#     it with GUACAMOLE_ADMIN_PASSWORD. GUACAMOLE_ADMIN_PASSWORD_RESET=true also sets it on
+#     the administrator account (recovery).
+#
+# Deploy-form values never fail the deploy (STANDARD 8.29): an invalid user name keeps
+# 'guacadmin'; a password shorter than 8 characters (or 'guacadmin') replaces the default
+# password with a random one nobody knows, so the login stays locked until a valid
+# GUACAMOLE_ADMIN_PASSWORD is set together with GUACAMOLE_ADMIN_PASSWORD_RESET=true.
+# Exit 2 = the default password may still be active: the caller disables database logins.
+set -uo pipefail
+
+SCHEMA_DIR=/opt/guacamole/extensions/guacamole-auth-jdbc/postgresql/schema
+WAIT_SECONDS=900
+# Salt and hash of guacadmin/guacadmin as seeded by 002-create-admin-user.sql.
+DEFAULT_SALT=FE24ADC5E11E2B25288D1704ABE67A79E342ECC26064CE69C5B3177795A82264
+DEFAULT_HASH=CA458A7D494E3BE824F5E1E175A1556C0F8EEF2C2D7DF3633BEC4A29C4411960
+
+log() { printf '[railway] %s\n' "$*"; }
+
+export PGHOST="${POSTGRESQL_HOSTNAME:-}" PGPORT="${POSTGRESQL_PORT:-5432}" PGDATABASE="${POSTGRESQL_DATABASE:-}" \
+       PGUSER="${POSTGRESQL_USERNAME:-}" PGPASSWORD="${POSTGRESQL_PASSWORD:-}" PGCONNECT_TIMEOUT=10 PGAPPNAME=railway-guacamole-init
+if [ -z "${PGHOST}" ] || [ -z "${PGDATABASE}" ] || [ -z "${PGUSER}" ]; then
+  log "ERROR: POSTGRESQL_HOSTNAME/POSTGRESQL_DATABASE/POSTGRESQL_USERNAME are not set."
+  exit 2
+fi
+[[ "${PGPORT}" =~ ^[0-9]{1,5}$ ]] || { log "WARNING: POSTGRESQL_PORT '${PGPORT}' is not a port; using 5432."; PGPORT=5432; export POSTGRESQL_PORT=5432; }
+
+# q "<SQL>" [-v name=value ...]: run one statement read from stdin, because psql substitutes
+# :'variables' only in input it reads, not in -c strings.
+q() { local query="$1"; shift; printf '%s;\n' "${query}" | psql -X -q -At -v ON_ERROR_STOP=1 "$@" -f -; }
+
+waited=0
+until q 'SELECT 1' >/dev/null 2>&1; do
+  if [ "${waited}" -ge "${WAIT_SECONDS}" ]; then
+    log "ERROR: Postgres at ${PGHOST}:${PGPORT} not reachable after ${WAIT_SECONDS}s."
+    exit 2
+  fi
+  [ $((waited % 60)) -eq 0 ] && log "waiting for Postgres at ${PGHOST}:${PGPORT}"
+  sleep 5
+  waited=$((waited + 5))
+done
+
+name="${GUACAMOLE_ADMIN_USERNAME:-}"
+if ! [[ "${name}" =~ ^[A-Za-z0-9][A-Za-z0-9._@-]{0,63}$ ]]; then
+  log "WARNING: GUACAMOLE_ADMIN_USERNAME '${name}' is not usable (letters, digits, . _ @ -, max 64); keeping 'guacadmin'."
+  name=guacadmin
+fi
+pass="${GUACAMOLE_ADMIN_PASSWORD:-}"
+pass_ok=true
+if [ "${#pass}" -lt 8 ] || [ "${pass}" = "guacadmin" ]; then
+  pass_ok=false
+fi
+
+if [ -z "$(q "SELECT to_regclass('public.guacamole_entity')")" ]; then
+  log "first boot: creating the Guacamole schema"
+  if ! cat "${SCHEMA_DIR}"/*.sql | psql -X -q -v ON_ERROR_STOP=1 --single-transaction -f - >/dev/null; then
+    log "ERROR: loading the schema failed (nothing was committed)."
+    exit 2
+  fi
+  if [ "${name}" != "guacadmin" ]; then
+    q "UPDATE guacamole_entity SET name = :'name' WHERE name = 'guacadmin' AND type = 'USER'" -v name="${name}" >/dev/null \
+      && log "administrator renamed to '${name}'" \
+      || { log "WARNING: could not rename guacadmin to '${name}'; keeping 'guacadmin'."; name=guacadmin; }
+  fi
+fi
+
+# Set a password: SHA-256(password || uppercase hex(salt)) with a fresh 32-byte salt, the
+# scheme of Guacamole's SHA256PasswordEncryptionService. $1 = WHERE clause on guacamole_user u
+# and guacamole_entity e (may use :'name'), $2 = password, $3 = value of :'name'.
+set_password() {
+  local where="$1" value="$2" salt
+  salt="$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' | tr 'a-f' 'A-F')"
+  q "UPDATE guacamole_user u SET password_salt = decode(:'salt', 'hex'),
+      password_hash = sha256(convert_to(:'pw' || :'salt', 'UTF8')), password_date = now()
+      FROM guacamole_entity e WHERE e.entity_id = u.entity_id AND ${where}" -v pw="${value}" -v salt="${salt}" -v name="${3:-}"
+}
+
+defaults="$(q "SELECT count(*) FROM guacamole_user WHERE password_salt = decode('${DEFAULT_SALT}', 'hex') AND password_hash = decode('${DEFAULT_HASH}', 'hex')")" \
+  || { log "ERROR: could not check for the default password."; exit 2; }
+
+if [ "${defaults}" != "0" ]; then
+  if [ "${pass_ok}" = true ]; then
+    set_password "u.password_hash = decode('${DEFAULT_HASH}', 'hex') AND u.password_salt = decode('${DEFAULT_SALT}', 'hex')" "${pass}" >/dev/null \
+      || { log "ERROR: could not replace the default password."; exit 2; }
+    log "default guacadmin password replaced with GUACAMOLE_ADMIN_PASSWORD (administrator: $(q "SELECT string_agg(e.name, ', ') FROM guacamole_entity e JOIN guacamole_system_permission p ON p.entity_id = e.entity_id WHERE p.permission = 'ADMINISTER' AND e.type = 'USER'"))."
+  else
+    set_password "u.password_hash = decode('${DEFAULT_HASH}', 'hex') AND u.password_salt = decode('${DEFAULT_SALT}', 'hex')" "$(head -c 48 /dev/urandom | base64)" >/dev/null \
+      || { log "ERROR: could not replace the default password."; exit 2; }
+    log "WARNING: GUACAMOLE_ADMIN_PASSWORD is shorter than 8 characters (or 'guacadmin'): the default password was replaced by a random one, so the administrator is LOCKED. Set a valid GUACAMOLE_ADMIN_PASSWORD and GUACAMOLE_ADMIN_PASSWORD_RESET=true, then redeploy."
+  fi
+elif [ "${GUACAMOLE_ADMIN_PASSWORD_RESET:-false}" = "true" ]; then
+  if [ "${pass_ok}" != true ]; then
+    log "WARNING: GUACAMOLE_ADMIN_PASSWORD_RESET=true but the password is shorter than 8 characters; left unchanged."
+  elif [ "$(q "SELECT count(*) FROM guacamole_entity WHERE name = :'name' AND type = 'USER'" -v name="${name}")" != "1" ]; then
+    log "WARNING: no user '${name}' exists; password reset skipped (GUACAMOLE_ADMIN_USERNAME must name an existing account)."
+  elif set_password "e.name = :'name' AND e.type = 'USER'" "${pass}" "${name}" >/dev/null; then
+    log "password of '${name}' set from GUACAMOLE_ADMIN_PASSWORD. Set GUACAMOLE_ADMIN_PASSWORD_RESET back to false."
+  else
+    log "WARNING: password reset for '${name}' failed."
+  fi
+else
+  log "database ready; accounts are managed in Guacamole (no default password present)."
+fi
+exit 0
